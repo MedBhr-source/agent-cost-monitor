@@ -1,4 +1,4 @@
-# 🤖 Enterprise Agent Cost Monitor
+#  Enterprise Agent Cost Monitor
 
 A real-time observability, cost control, and intervention platform for multi-agent AI workflows (CrewAI, LangGraph, AutoGen, OpenAI Agents SDK).
 
@@ -10,7 +10,7 @@ Multi-agent systems can spiral into expensive infinite loops. One runaway loop c
 
 This platform:
 - **Tracks every API call** in real time with precise token & model cost calculations.
-- **Dynamic Model Pricing Table** — Configure custom per-1M input/output token rates for any model (OpenAI, Anthropic, DeepSeek, Google, Meta, local vLLM/Ollama, or private fine-tunes).
+- **Dynamic Model Pricing Table** - Configure custom per-1M input/output token rates for any model (OpenAI, Anthropic, DeepSeek, Google, Meta, local vLLM/Ollama, or private fine-tunes).
 - **Detects runaway loops** automatically (>20 calls per agent in 5 minutes).
 - **Enforces budget caps & predicts exhaustion** with burn-rate forecasting.
 - **Auto-pauses runaway agents & prompts Human-in-the-Loop (HITL)** reviews.
@@ -20,16 +20,16 @@ This platform:
 
 ## Features
 
-- ✅ **Real-Time Cost & Token Tracking** — Live metrics per agent, per model, per step.
-- ✅ **Dynamic Model Pricing Management** — Web UI & API to add, edit, and delete custom model pricing rates on the fly.
-- ✅ **Runaway Loop Detection & Auto-Pause** — Immediate mitigation before budget depletion.
-- ✅ **Human-in-the-Loop (HITL) Queue** — Review, resume, or kill suspicious agent executions.
-- ✅ **Resilient WebSocket Streaming** — Automatic reconnection with exponential backoff and visual live status indicator.
-- ✅ **API Key Authentication** — Protected REST endpoints via `X-API-Key` headers (with local dev bypass).
-- ✅ **Flexible Persistence** — PostgreSQL for production or SQLite/in-memory for development.
-- ✅ **Structured Logging & Global Error Handling** — Clean, concise HTTP request lifecycle logging and JSON error payloads.
-- ✅ **Python SDK & Decorator** — One-line integration into existing CrewAI / Python pipelines with custom model pricing support.
-- ✅ **CSV Export & Run History** — Historical analytics and downloadable run reports.
+- ✅ **Real-Time Cost & Token Tracking** - Live metrics per agent, per model, per step.
+- ✅ **Dynamic Model Pricing Management** - Web UI & API to add, edit, and delete custom model pricing rates on the fly.
+- ✅ **Runaway Loop Detection & Auto-Pause** - Immediate mitigation before budget depletion.
+- ✅ **Human-in-the-Loop (HITL) Queue** - Review, resume, or kill suspicious agent executions.
+- ✅ **Resilient WebSocket Streaming** - Automatic reconnection with exponential backoff and visual live status indicator.
+- ✅ **API Key Authentication** - Protected REST endpoints via `X-API-Key` headers (with local dev bypass).
+- ✅ **Flexible Persistence** - PostgreSQL for production or SQLite/in-memory for development.
+- ✅ **Structured Logging & Global Error Handling** - Clean, concise HTTP request lifecycle logging and JSON error payloads.
+- ✅ **Python SDK & Decorator** - One-line integration into existing CrewAI / Python pipelines with custom model pricing support.
+- ✅ **CSV Export & Run History** - Historical analytics and downloadable run reports.
 
 ## Architecture
 
