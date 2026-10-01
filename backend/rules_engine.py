@@ -1,19 +1,16 @@
-"""Alert rules engine for detecting cost anomalies.
+"""Alert rules engine for detecting cost anomalies."""
 
-Evaluates crew metrics against configurable thresholds and generates
-alerts. Built-in deduplication prevents the same rule from firing
-more than once for the same agent within a crew run.
-"""
-
+import logging
 from datetime import datetime
 
 from cost_tracker import tracker
 
-# ── Configurable thresholds ────────────────────────────────────
-RUNAWAY_CALL_LIMIT = 20        # max calls per agent in 5 min window
-BUDGET_WARNING_PCT = 80        # alert when usage exceeds this %
-SLOW_EXECUTION_FACTOR = 1.5    # alert when duration > budget × factor
-COST_DRIFT_FACTOR = 2.0        # alert when last call > avg × factor
+logger = logging.getLogger("agent_monitor.rules")
+
+RUNAWAY_CALL_LIMIT = 20
+BUDGET_WARNING_PCT = 80
+SLOW_EXECUTION_FACTOR = 1.5
+COST_DRIFT_FACTOR = 2.0
 
 
 def evaluate(crew_id: str) -> list[dict]:
@@ -78,14 +75,25 @@ def evaluate(crew_id: str) -> list[dict]:
                 agent_id=agent_id,
                 action="PAUSE_AGENT",
             )
-            _add(alert)
-            tracker.add_hitl_event(
-                crew_id,
-                agent_id,
-                alert["message"],
-                recent,
-                agent.get("cost", 0.0),
-            )
+            key = f"{alert['rule']}:{agent_id}"
+            if key not in seen:
+                seen.add(key)
+                new_alerts.append(alert)
+                tracker.add_alert(crew_id, alert)
+                tracker.pause_agent(crew_id, agent_id)
+                # Check if there is already an unresolved HITL event for this agent
+                has_pending_hitl = any(
+                    ev["agent_id"] == agent_id and ev["decision"] is None
+                    for ev in crew.get("hitl_queue", [])
+                )
+                if not has_pending_hitl:
+                    tracker.add_hitl_event(
+                        crew_id,
+                        agent_id,
+                        alert["message"],
+                        recent,
+                        agent.get("cost", 0.0),
+                    )
 
         if len(agent["history"]) >= 3:
             costs = [c["cost"] for c in agent["history"]]
@@ -100,6 +108,8 @@ def evaluate(crew_id: str) -> list[dict]:
                     agent_id=agent_id,
                 ))
 
+    if new_alerts:
+        logger.info("Crew %s: %d new alert(s)", crew_id, len(new_alerts))
     return new_alerts
 
 

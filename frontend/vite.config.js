@@ -5,10 +5,16 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
-    // Forward API and WebSocket calls to the FastAPI backend
     proxy: {
-      "/api": "http://localhost:8000",
-      "/ws": { target: "ws://localhost:8000", ws: true },
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: "http://localhost:8000",
+        ws: true,
+        changeOrigin: true,
+      },
     },
   },
 });

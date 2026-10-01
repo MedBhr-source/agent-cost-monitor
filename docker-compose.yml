@@ -1,19 +1,18 @@
 version: '3.9'
 
 services:
-  # Python FastAPI backend
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     environment:
-      # Use SQLite for simplicity by default, or provide POSTGRES_URL if adding Postgres
-      DATABASE_URL: sqlite:///./agent_monitor.db
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./agent_monitor.db}
+      API_KEY: ${API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-dummy-key}
     volumes:
       - ./backend:/app
 
-  # React frontend
   frontend:
     build: ./frontend
     ports:

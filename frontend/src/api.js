@@ -1,10 +1,59 @@
-/* ── API helpers ─────────────────────────────────────────────
-   All calls go to /api/* — Vite proxies them to localhost:8000
-   in dev, and nginx proxies them in production.
-   Using native fetch instead of axios to keep deps minimal.
-──────────────────────────────────────────────────────────── */
-
 const API = "/api";
+
+export function getApiKey() {
+  try {
+    return localStorage.getItem("agent_monitor_api_key") || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setApiKey(key) {
+  try {
+    if (key && key.trim()) {
+      localStorage.setItem("agent_monitor_api_key", key.trim());
+    } else {
+      localStorage.removeItem("agent_monitor_api_key");
+    }
+  } catch {
+    // Ignore storage quota / access issues
+  }
+}
+
+async function request(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const key = getApiKey();
+  if (key) {
+    headers["X-API-Key"] = key;
+  }
+
+  const res = await fetch(`${API}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (!res.ok) {
+    let errorDetail = `Request failed with status ${res.status}`;
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.detail) {
+        errorDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+      }
+    } catch {
+      try {
+        const errText = await res.text();
+        if (errText) errorDetail = errText;
+      } catch {
+        // use default message
+      }
+    }
+    const err = new Error(errorDetail);
+    err.status = res.status;
+    throw err;
+  }
+
+  return res;
+}
 
 export async function startCrew(topicOrBudget, budgetOrScenario, scenarioOrSlack = "customer_reviews", maybeSlackWebhook = "", durationBudget = 600) {
   let topic = "Multi-agent AI systems";
@@ -23,7 +72,7 @@ export async function startCrew(topicOrBudget, budgetOrScenario, scenarioOrSlack
     slackWebhook = typeof scenarioOrSlack === "string" ? scenarioOrSlack : "";
   }
 
-  const res = await fetch(`${API}/run-crew`, {
+  const res = await request("/run-crew", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -34,45 +83,44 @@ export async function startCrew(topicOrBudget, budgetOrScenario, scenarioOrSlack
       slack_webhook: slackWebhook || null,
     }),
   });
-  if (!res.ok) throw new Error("Failed to start crew");
   return res.json();
 }
 
 export async function pauseAgent(crewId, agentId) {
-  const res = await fetch(`${API}/pause/${crewId}/${agentId}`, {
+  const res = await request(`/pause/${crewId}/${agentId}`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error("Failed to pause agent");
   return res.json();
 }
 
 export async function resumeAgent(crewId, agentId) {
-  const res = await fetch(`${API}/resume/${crewId}/${agentId}`, {
+  const res = await request(`/resume/${crewId}/${agentId}`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error("Failed to resume agent");
   return res.json();
 }
 
 export async function resolveHitl(crewId, eventId, decision) {
-  const res = await fetch(`${API}/hitl/${crewId}/${eventId}`, {
+  const res = await request(`/hitl/${crewId}/${eventId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision }),
   });
-  if (!res.ok) throw new Error("Failed to resolve HITL decision");
   return res.json();
 }
 
 export async function fetchHistory() {
-  const res = await fetch(`${API}/history`);
-  if (!res.ok) throw new Error("Failed to load history");
+  const res = await request("/history");
+  return res.json();
+}
+
+export async function fetchMetrics(crewId) {
+  const res = await request(`/metrics/${crewId}`);
   return res.json();
 }
 
 export async function exportCSV(crewId) {
-  const res = await fetch(`${API}/export/${crewId}`);
-  if (!res.ok) throw new Error("Failed to export CSV");
+  const res = await request(`/export/${crewId}`);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -83,4 +131,30 @@ export async function exportCSV(crewId) {
   a.remove();
   URL.revokeObjectURL(url);
   return true;
+}
+
+export async function fetchPricing() {
+  const res = await request("/pricing");
+  return res.json();
+}
+
+export async function savePricing(model, inputCost, outputCost, provider = "Custom") {
+  const res = await request("/pricing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: model.trim(),
+      input_cost: Number(inputCost),
+      output_cost: Number(outputCost),
+      provider: provider.trim() || "Custom",
+    }),
+  });
+  return res.json();
+}
+
+export async function deletePricing(model) {
+  const res = await request(`/pricing/${encodeURIComponent(model)}`, {
+    method: "DELETE",
+  });
+  return res.json();
 }

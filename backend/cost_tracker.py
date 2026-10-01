@@ -1,34 +1,76 @@
-"""In-memory cost tracking for agent API calls.
+"""In-memory cost tracking for agent API calls."""
 
-Stores real-time metrics per crew and per agent. Thread-safe so the
-FastAPI background simulation tasks and the WebSocket reader never clash.
-No Redis or database required — just run the server and go.
-"""
-
+import logging
 import uuid
 from datetime import datetime
 from threading import Lock
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
-# ── Model pricing (USD per 1 million tokens) ───────────────────
-MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    "gpt-4-turbo": {"input": 3.00, "output": 6.00},
-    "gpt-4": {"input": 30.00, "output": 60.00},
-    "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
-    "claude-3-sonnet": {"input": 3.00, "output": 15.00},
-    "claude-3-haiku": {"input": 0.80, "output": 4.00},
+logger = logging.getLogger("agent_monitor.tracker")
+
+DEFAULT_PRICING: Dict[str, dict] = {
+    "gpt-4o": {"provider": "OpenAI", "input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"provider": "OpenAI", "input": 0.15, "output": 0.60},
+    "gpt-4-turbo": {"provider": "OpenAI", "input": 3.00, "output": 6.00},
+    "gpt-4": {"provider": "OpenAI", "input": 30.00, "output": 60.00},
+    "gpt-3.5-turbo": {"provider": "OpenAI", "input": 0.50, "output": 1.50},
+    "claude-3-5-sonnet": {"provider": "Anthropic", "input": 3.00, "output": 15.00},
+    "claude-3-sonnet": {"provider": "Anthropic", "input": 3.00, "output": 15.00},
+    "claude-3-haiku": {"provider": "Anthropic", "input": 0.25, "output": 1.25},
+    "deepseek-v3": {"provider": "DeepSeek", "input": 0.14, "output": 0.28},
+    "deepseek-r1": {"provider": "DeepSeek", "input": 0.55, "output": 2.19},
+    "gemini-1.5-pro": {"provider": "Google", "input": 1.25, "output": 5.00},
+    "gemini-1.5-flash": {"provider": "Google", "input": 0.075, "output": 0.30},
+    "llama-3.3-70b": {"provider": "Meta / Local", "input": 0.55, "output": 0.80},
 }
 
 
 class CostTracker:
-    """Singleton-style tracker that all modules share."""
-
     def __init__(self):
         self._lock = Lock()
         self.crews: Dict[str, dict] = {}
         self.run_history: list[dict] = []
+        self.pricing: Dict[str, dict] = {k: dict(v) for k, v in DEFAULT_PRICING.items()}
+        self._on_finalize: Optional[Callable] = None
 
-    # ── Lifecycle ──────────────────────────────────────────────
+    def set_on_finalize(self, callback: Optional[Callable] = None):
+        self._on_finalize = callback
+
+    def get_all_pricing(self) -> list[dict]:
+        with self._lock:
+            return [
+                {
+                    "model": model,
+                    "provider": data.get("provider", "Custom"),
+                    "input_cost": data.get("input", 1.0),
+                    "output_cost": data.get("output", 2.0),
+                }
+                for model, data in self.pricing.items()
+            ]
+
+    def set_price(self, model: str, input_cost: float, output_cost: float, provider: str = "Custom"):
+        with self._lock:
+            self.pricing[model] = {
+                "provider": provider or "Custom",
+                "input": float(input_cost),
+                "output": float(output_cost),
+            }
+
+    def delete_price(self, model: str) -> bool:
+        with self._lock:
+            if model in self.pricing:
+                del self.pricing[model]
+                return True
+            return False
+
+    def load_pricing_from_db(self, db_prices: list[dict]):
+        with self._lock:
+            for item in db_prices:
+                self.pricing[item["model"]] = {
+                    "provider": item.get("provider", "Custom"),
+                    "input": float(item.get("input_cost", 1.0)),
+                    "output": float(item.get("output_cost", 2.0)),
+                }
 
     def start_crew(
         self,
@@ -38,7 +80,6 @@ class CostTracker:
         scenario: str = "customer_reviews",
         slack_webhook: Optional[str] = None,
     ) -> str:
-        """Create a new crew run and begin tracking."""
         with self._lock:
             self.crews[crew_id] = {
                 "budget": budget,
@@ -55,10 +96,10 @@ class CostTracker:
                 "cost_timeline": [],
                 "log_feed": [],
             }
+        logger.info("Crew %s started (budget=%.2f, scenario=%s)", crew_id, budget, scenario)
         return crew_id
 
     def finalize(self, crew_id: str, status: str = "completed"):
-        """Mark a crew run as finished."""
         crew = self.crews.get(crew_id)
         if not crew:
             return
@@ -92,14 +133,18 @@ class CostTracker:
         if len(self.run_history) > 50:
             self.run_history = self.run_history[:50]
 
-    # ── Logging ────────────────────────────────────────────────
+        if self._on_finalize:
+            try:
+                self._on_finalize(run)
+            except Exception as exc:
+                logger.warning("Finalize callback failed: %s", exc)
+        logger.info("Crew %s finalized (status=%s, cost=%.4f)", crew_id, status, crew["total_cost"])
 
     def log_call(self, crew_id: str, agent_id: str, model: str,
                  input_tokens: int, output_tokens: int) -> dict:
-        """Record a single API call and return a receipt."""
-        pricing = MODEL_PRICING.get(model, {"input": 3.0, "output": 6.0})
-        cost = (input_tokens * pricing["input"]
-                + output_tokens * pricing["output"]) / 1_000_000
+        rates = self.pricing.get(model, {"input": 3.0, "output": 6.0})
+        cost = (input_tokens * rates["input"]
+                + output_tokens * rates["output"]) / 1_000_000
 
         now = datetime.now()
         record = {
@@ -148,7 +193,7 @@ class CostTracker:
                 "time": now.strftime("%H:%M:%S"),
                 "agent": agent_id,
                 "type": "call",
-                "message": f"{agent_id} completed a model call",
+                "message": f"{agent_id} completed a model call ({model})",
                 "tokens": input_tokens + output_tokens,
                 "cost": round(cost, 6),
             }
@@ -158,10 +203,7 @@ class CostTracker:
 
         return record
 
-    # ── Queries ────────────────────────────────────────────────
-
     def get_metrics(self, crew_id: str) -> Optional[dict]:
-        """Build a full metrics snapshot for the frontend."""
         crew = self.crews.get(crew_id)
         if not crew:
             return None
@@ -208,8 +250,6 @@ class CostTracker:
 
     def get_history(self):
         return list(self.run_history)
-
-    # ── Agent control ──────────────────────────────────────────
 
     def pause_agent(self, crew_id: str, agent_id: str) -> bool:
         crew = self.crews.get(crew_id)
@@ -275,5 +315,4 @@ class CostTracker:
             crew["alerts"].append(alert)
 
 
-# ── Module-level singleton ─────────────────────────────────────
 tracker = CostTracker()

@@ -1,19 +1,10 @@
-"""Minimal Python SDK for the Agent Cost Monitor backend.
-
-This mirrors the public example usage in the repo:
-
-    from agent_monitor_sdk import AgentMonitor
-
-    monitor = AgentMonitor(base_url="http://localhost:8000", budget=5.00)
-    with monitor.crew("demo-run") as ctx:
-        ctx.log("researcher", "gpt-4-turbo", 1000, 500)
-"""
+"""Minimal Python SDK for the Agent Cost Monitor backend."""
 
 from __future__ import annotations
 
 import uuid
 from contextlib import AbstractContextManager
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 import requests
 
@@ -26,6 +17,12 @@ class CrewContext(AbstractContextManager):
         self.name = name
         self.crew_id: Optional[str] = None
 
+    def _headers(self):
+        headers = {}
+        if self.monitor.api_key:
+            headers["X-API-Key"] = self.monitor.api_key
+        return headers
+
     def __enter__(self):
         payload = {
             "topic": self.name,
@@ -37,6 +34,7 @@ class CrewContext(AbstractContextManager):
         resp = requests.post(
             f"{self.monitor.base_url}/api/run-crew",
             json=payload,
+            headers=self._headers(),
             timeout=self.monitor.timeout,
         )
         resp.raise_for_status()
@@ -64,6 +62,7 @@ class CrewContext(AbstractContextManager):
         resp = requests.post(
             f"{self.monitor.base_url}/api/log/{self.crew_id}",
             json=payload,
+            headers=self._headers(),
             timeout=self.monitor.timeout,
         )
         resp.raise_for_status()
@@ -77,6 +76,7 @@ class CrewContext(AbstractContextManager):
             return None
         resp = requests.get(
             f"{self.monitor.base_url}/api/metrics/{self.crew_id}",
+            headers=self._headers(),
             timeout=self.monitor.timeout,
         )
         resp.raise_for_status()
@@ -94,6 +94,8 @@ class AgentMonitor:
         duration_budget: int = 600,
         scenario: str = "customer_reviews",
         slack_webhook: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model_pricing: Optional[Dict[str, Dict[str, float]]] = None,
         timeout: int = 10,
     ):
         self.base_url = base_url.rstrip("/")
@@ -102,14 +104,40 @@ class AgentMonitor:
         self.duration_budget = int(duration_budget)
         self.scenario = scenario
         self.slack_webhook = slack_webhook
+        self.api_key = api_key
         self.timeout = timeout
+
+        if model_pricing:
+            for model, rates in model_pricing.items():
+                self.register_pricing(
+                    model=model,
+                    input_cost=rates.get("input", rates.get("input_cost", 1.0)),
+                    output_cost=rates.get("output", rates.get("output_cost", 2.0)),
+                    provider=rates.get("provider", "Custom"),
+                )
+
+    def register_pricing(self, model: str, input_cost: float, output_cost: float, provider: str = "Custom"):
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
+        try:
+            requests.post(
+                f"{self.base_url}/api/pricing",
+                json={
+                    "model": model,
+                    "provider": provider,
+                    "input_cost": float(input_cost),
+                    "output_cost": float(output_cost),
+                },
+                headers=headers,
+                timeout=self.timeout,
+            )
+        except Exception as exc:
+            if self.verbose:
+                print(f"[AgentMonitor] pricing registration failed: {exc}")
 
     def crew(self, name: Optional[str] = None) -> CrewContext:
         return CrewContext(self, name or f"crew-{uuid.uuid4().hex[:8]}")
 
     def watch(self, agent_id: str, model: str = "gpt-4-turbo"):
-        """Decorator that logs an OpenAI-like response usage automatically."""
-
         def decorator(func: Callable):
             def wrapper(*args, **kwargs):
                 result = func(*args, **kwargs)
